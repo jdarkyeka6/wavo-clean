@@ -28,8 +28,8 @@ export default function App() {
   const bottomRef = useRef(null);
   const currentUser = session?.user;
 
-  // Your GIPHY API key - replace with your actual key
-  const GIPHY_API_KEY = "YOUR_GIPHY_API_KEY_HERE";
+  // This tells Vite to grab the key from your .env file
+const GIPHY_API_KEY = import.meta.env.VITE_GIPHY_API_KEY;
 
   const chatId = useMemo(() => {
     if (!currentUser || !selectedUser) return null;
