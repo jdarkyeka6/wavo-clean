@@ -309,8 +309,8 @@ export default function App() {
       const endpoint = q
         ? `https://api.giphy.com/v1/gifs/search?api_key=${GIPHY_API_KEY}&q=${encodeURIComponent(
             q
-          )}&limit=24&rating=pg`
-        : `https://api.giphy.com/v1/gifs/trending?api_key=${GIPHY_API_KEY}&limit=24&rating=pg`;
+          )}&limit=18&rating=pg`
+        : `https://api.giphy.com/v1/gifs/trending?api_key=${GIPHY_API_KEY}&limit=18&rating=pg`;
       const res = await fetch(endpoint);
       const json = await res.json();
       setGiphyResults(json.data || []);
@@ -543,9 +543,11 @@ export default function App() {
                         onClick={() => sendGif(g.images.fixed_height.url)}
                       >
                         <img
-                          src={g.images.fixed_height_small.url}
+                          src={g.images.fixed_width_small.url}
                           alt={g.title || "GIF"}
                           loading="lazy"
+                          width={g.images.fixed_width_small.width}
+                          height={g.images.fixed_width_small.height}
                         />
                       </button>
                     ))}
