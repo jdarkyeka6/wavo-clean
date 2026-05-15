@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "./supabaseClient";
-import { Bell } from "lucide-react";
+import { Bell, Image as ImageIcon, X, Search } from "lucide-react";
 import "./styles.css";
+
+const GIPHY_API_KEY = import.meta.env.VITE_GIPHY_API_KEY;
 
 export default function App() {
   const [session, setSession] = useState(null);
@@ -20,6 +22,12 @@ export default function App() {
   const [notifications, setNotifications] = useState([]);
   const [showNotifs, setShowNotifs] = useState(false);
 
+  // giphy
+  const [showGiphy, setShowGiphy] = useState(false);
+  const [giphySearch, setGiphySearch] = useState("");
+  const [giphyResults, setGiphyResults] = useState([]);
+  const [giphyLoading, setGiphyLoading] = useState(false);
+
   const bottomRef = useRef(null);
   const selectedUserRef = useRef(null);
   const isFocusedRef = useRef(true);
@@ -31,7 +39,6 @@ export default function App() {
     return [currentUser.id, selectedUser.id].sort().join("_");
   }, [currentUser, selectedUser]);
 
-  // keep refs in sync so the notification listener always sees current values
   useEffect(() => {
     selectedUserRef.current = selectedUser;
   }, [selectedUser]);
@@ -41,7 +48,6 @@ export default function App() {
 
   const unreadCount = notifications.filter((n) => !n.is_read).length;
 
-  // unread message count per user (for sidebar badges)
   const unreadByUser = useMemo(() => {
     const map = {};
     notifications.forEach((n) => {
@@ -71,16 +77,13 @@ export default function App() {
     }
   };
 
-  // mark notifications from a given sender as read (when you open their chat)
   const clearNotifsFromSender = async (senderId) => {
     const toClear = notifications.filter(
       (n) => n.sender_id === senderId && !n.is_read
     );
     if (toClear.length === 0) return;
     setNotifications((prev) =>
-      prev.map((n) =>
-        n.sender_id === senderId ? { ...n, is_read: true } : n
-      )
+      prev.map((n) => (n.sender_id === senderId ? { ...n, is_read: true } : n))
     );
     await supabase
       .from("notifications")
@@ -150,7 +153,6 @@ export default function App() {
           const notif = payload.new;
           setNotifications((prev) => [notif, ...prev]);
 
-          // fire a browser notification if the relevant chat isn't open & focused
           const openChatId = selectedUserRef.current
             ? [currentUser.id, selectedUserRef.current.id].sort().join("_")
             : null;
@@ -262,23 +264,69 @@ export default function App() {
   // --- ACTIONS ---
   function openChat(user) {
     setSelectedUser(user);
+    setShowGiphy(false);
     clearNotifsFromSender(user.id);
   }
 
-  async function sendMessage(e) {
-    e.preventDefault();
-    if (!messageText.trim()) return;
-
-    const content = messageText;
-    setMessageText("");
-
+  // shared insert helper — used by both text and GIF sends
+  async function insertMessage(content, type) {
+    if (!chatId || !selectedUser) return;
     await supabase.from("messages").insert({
       chat_id: chatId,
       sender_id: currentUser.id,
       receiver_id: selectedUser.id,
-      content: content,
+      content,
+      type,
       is_read: false,
     });
+  }
+
+  async function sendMessage(e) {
+    e.preventDefault();
+    const text = messageText.trim();
+    if (!text) return;
+    setMessageText("");
+    await insertMessage(text, "text");
+  }
+
+  async function sendGif(gifUrl) {
+    setShowGiphy(false);
+    setGiphySearch("");
+    setGiphyResults([]);
+    await insertMessage(gifUrl, "image");
+  }
+
+  // --- GIPHY ---
+  async function searchGiphy(e) {
+    e?.preventDefault();
+    const q = giphySearch.trim();
+    if (!GIPHY_API_KEY) {
+      alert("GIPHY API key is missing. Add VITE_GIPHY_API_KEY in Vercel.");
+      return;
+    }
+    setGiphyLoading(true);
+    try {
+      const endpoint = q
+        ? `https://api.giphy.com/v1/gifs/search?api_key=${GIPHY_API_KEY}&q=${encodeURIComponent(
+            q
+          )}&limit=24&rating=pg`
+        : `https://api.giphy.com/v1/gifs/trending?api_key=${GIPHY_API_KEY}&limit=24&rating=pg`;
+      const res = await fetch(endpoint);
+      const json = await res.json();
+      setGiphyResults(json.data || []);
+    } catch (err) {
+      alert("Couldn't load GIFs: " + err.message);
+    }
+    setGiphyLoading(false);
+  }
+
+  function toggleGiphy() {
+    const next = !showGiphy;
+    setShowGiphy(next);
+    if (next && giphyResults.length === 0) {
+      // preload trending GIFs when the panel first opens
+      searchGiphy();
+    }
   }
 
   async function handleAuth(e) {
@@ -437,10 +485,20 @@ export default function App() {
             <div className="messages">
               {messages.map((msg) => {
                 const mine = msg.sender_id === currentUser.id;
+                const isImage = msg.type === "image";
                 return (
                   <div key={msg.id} className={`bubble-wrap ${mine ? "mine" : "theirs"}`}>
-                    <div className="bubble">
-                      <p>{msg.content}</p>
+                    <div className={`bubble ${isImage ? "bubble-image" : ""}`}>
+                      {isImage ? (
+                        <img
+                          className="msg-image"
+                          src={msg.content}
+                          alt="GIF"
+                          loading="lazy"
+                        />
+                      ) : (
+                        <p>{msg.content}</p>
+                      )}
                       <div className="msg-footer">
                         <span>{fmtTime(msg.created_at)}</span>
                         {mine && (
@@ -459,7 +517,51 @@ export default function App() {
               })}
               <div ref={bottomRef} />
             </div>
+
+            {showGiphy && (
+              <div className="giphy-panel">
+                <form className="giphy-search" onSubmit={searchGiphy}>
+                  <Search size={15} />
+                  <input
+                    value={giphySearch}
+                    onChange={(e) => setGiphySearch(e.target.value)}
+                    placeholder="Search GIFs…"
+                    autoFocus
+                  />
+                  <button type="submit">Search</button>
+                </form>
+                <div className="giphy-grid">
+                  {giphyLoading && <div className="giphy-status">Loading…</div>}
+                  {!giphyLoading && giphyResults.length === 0 && (
+                    <div className="giphy-status">No GIFs found</div>
+                  )}
+                  {!giphyLoading &&
+                    giphyResults.map((g) => (
+                      <button
+                        key={g.id}
+                        className="giphy-thumb"
+                        onClick={() => sendGif(g.images.fixed_height.url)}
+                      >
+                        <img
+                          src={g.images.fixed_height_small.url}
+                          alt={g.title || "GIF"}
+                          loading="lazy"
+                        />
+                      </button>
+                    ))}
+                </div>
+              </div>
+            )}
+
             <form className="composer" onSubmit={sendMessage}>
+              <button
+                type="button"
+                className={`composer-icon ${showGiphy ? "active" : ""}`}
+                onClick={toggleGiphy}
+                aria-label="Send a GIF"
+              >
+                {showGiphy ? <X size={18} /> : <ImageIcon size={18} />}
+              </button>
               <input
                 value={messageText}
                 onChange={(e) => setMessageText(e.target.value)}
