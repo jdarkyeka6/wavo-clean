@@ -1,6 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "./supabaseClient";
 import { Bell, Image as ImageIcon, X, Search } from "lucide-react";
+import {
+  registerServiceWorker,
+  ensureNotificationPermission,
+  subscribeToPush,
+} from "./push";
 import "./styles.css";
 
 const GIPHY_API_KEY = import.meta.env.VITE_GIPHY_API_KEY;
@@ -108,7 +113,9 @@ export default function App() {
     async function init() {
       const { data } = await supabase.auth.getSession();
       setSession(data.session ?? null);
-      if (Notification.permission === "default") Notification.requestPermission();
+      // Register the always-on doorman (service worker) early.
+      // Permission is requested later, after login — see the effect below.
+      registerServiceWorker();
     }
     init();
 
@@ -133,6 +140,23 @@ export default function App() {
     loadProfile();
     loadUsers();
     loadNotifications();
+  }, [currentUser]);
+
+  // --- PUSH SUBSCRIPTION (post-login) ---
+  // Once the user is logged in, ask for notification permission (if we haven't
+  // already) and register their browser for push. Safe to call repeatedly —
+  // the helper reuses existing subscriptions and upserts on endpoint.
+  useEffect(() => {
+    if (!currentUser) return;
+    let cancelled = false;
+    (async () => {
+      const granted = await ensureNotificationPermission();
+      if (cancelled || !granted) return;
+      await subscribeToPush(currentUser.id);
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, [currentUser]);
 
   // --- NOTIFICATIONS REALTIME ---
