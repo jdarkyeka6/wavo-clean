@@ -9,6 +9,46 @@ import {
 import "./styles.css";
 
 const GIPHY_API_KEY = import.meta.env.VITE_GIPHY_API_KEY;
+const GENERIC_ERROR = "Sorry, something went wrong. Please try again.";
+
+function reportError(context, error) {
+  console.error(`[wavo] ${context}`, error);
+}
+
+function friendlyAuthError(error, mode) {
+  const message = String(error?.message || "").toLowerCase();
+
+  if (
+    message.includes("invalid login credentials") ||
+    message.includes("invalid credentials") ||
+    message.includes("wrong password")
+  ) {
+    return "Incorrect username or password. Please try again.";
+  }
+
+  if (message.includes("email not confirmed")) {
+    return "Your account isn't ready yet. Please try again shortly.";
+  }
+
+  if (
+    mode === "signup" &&
+    (message.includes("already registered") ||
+      message.includes("already exists") ||
+      message.includes("duplicate"))
+  ) {
+    return "That username is already taken. Try another one.";
+  }
+
+  if (message.includes("password") && message.includes("characters")) {
+    return "Your password is too short. Please choose a longer password.";
+  }
+
+  if (message.includes("rate limit") || message.includes("too many")) {
+    return "Too many attempts. Please try again in a little while.";
+  }
+
+  return GENERIC_ERROR;
+}
 
 export default function App() {
   const [session, setSession] = useState(null);
@@ -67,18 +107,23 @@ export default function App() {
   const initial = (name) => (name?.trim()?.[0] || "?").toUpperCase();
 
   const markAsRead = async (msgId) => {
-    await supabase
+    const { error } = await supabase
       .from("messages")
       .update({ is_read: true, read_at: new Date().toISOString() })
       .eq("id", msgId);
+    if (error) reportError("Failed to mark message as read", error);
   };
 
   const triggerNotification = (msg, fromName) => {
-    if (Notification.permission === "granted") {
-      new Notification(`Wavo: ${fromName || "New Message"}`, {
-        body: msg.content,
-        icon: "/favicon.svg",
-      });
+    try {
+      if (Notification.permission === "granted") {
+        new Notification(`Wavo: ${fromName || "New Message"}`, {
+          body: msg.content,
+          icon: "/favicon.svg",
+        });
+      }
+    } catch (error) {
+      reportError("Browser notification failed", error);
     }
   };
 
@@ -90,32 +135,41 @@ export default function App() {
     setNotifications((prev) =>
       prev.map((n) => (n.sender_id === senderId ? { ...n, is_read: true } : n))
     );
-    await supabase
+    const { error } = await supabase
       .from("notifications")
       .update({ is_read: true })
       .eq("sender_id", senderId)
       .eq("user_id", currentUser.id)
       .eq("is_read", false);
+    if (error) reportError("Failed to clear notifications", error);
   };
 
   const markAllNotifsRead = async () => {
     if (unreadCount === 0) return;
     setNotifications((prev) => prev.map((n) => ({ ...n, is_read: true })));
-    await supabase
+    const { error } = await supabase
       .from("notifications")
       .update({ is_read: true })
       .eq("user_id", currentUser.id)
       .eq("is_read", false);
+    if (error) reportError("Failed to mark notifications as read", error);
   };
 
   // --- LIFECYCLE & FOCUS ---
   useEffect(() => {
     async function init() {
-      const { data } = await supabase.auth.getSession();
-      setSession(data.session ?? null);
+      try {
+        const { data, error } = await supabase.auth.getSession();
+        if (error) throw error;
+        setSession(data.session ?? null);
+      } catch (error) {
+        reportError("Session load failed", error);
+        setSession(null);
+      }
+
       // Register the always-on doorman (service worker) early.
       // Permission is requested later, after login — see the effect below.
-      registerServiceWorker();
+      registerServiceWorker().catch((error) => reportError("Service worker registration failed", error));
     }
     init();
 
@@ -143,16 +197,17 @@ export default function App() {
   }, [currentUser]);
 
   // --- PUSH SUBSCRIPTION (post-login) ---
-  // Once the user is logged in, ask for notification permission (if we haven't
-  // already) and register their browser for push. Safe to call repeatedly —
-  // the helper reuses existing subscriptions and upserts on endpoint.
   useEffect(() => {
     if (!currentUser) return;
     let cancelled = false;
     (async () => {
-      const granted = await ensureNotificationPermission();
-      if (cancelled || !granted) return;
-      await subscribeToPush(currentUser.id);
+      try {
+        const granted = await ensureNotificationPermission();
+        if (cancelled || !granted) return;
+        await subscribeToPush(currentUser.id);
+      } catch (error) {
+        reportError("Push setup failed", error);
+      }
     })();
     return () => {
       cancelled = true;
@@ -188,7 +243,9 @@ export default function App() {
           }
         }
       )
-      .subscribe();
+      .subscribe((status, error) => {
+        if (error) reportError("Notification realtime connection failed", error);
+      });
 
     return () => {
       supabase.removeChannel(channel);
@@ -233,7 +290,9 @@ export default function App() {
           );
         }
       )
-      .subscribe();
+      .subscribe((status, error) => {
+        if (error) reportError("Chat realtime connection failed", error);
+      });
 
     return () => {
       supabase.removeChannel(channel);
@@ -246,43 +305,61 @@ export default function App() {
 
   // --- DATA FETCHING ---
   async function loadProfile() {
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from("profiles")
       .select("*")
       .eq("id", currentUser.id)
       .single();
+    if (error) {
+      reportError("Profile load failed", error);
+      return;
+    }
     if (data) setProfile(data);
   }
 
   async function loadUsers() {
-    const { data } = await supabase.from("profiles").select("*").neq("id", currentUser.id);
+    const { data, error } = await supabase.from("profiles").select("*").neq("id", currentUser.id);
+    if (error) {
+      reportError("User list load failed", error);
+      return;
+    }
     if (data) setUsers(data);
   }
 
   async function loadNotifications() {
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from("notifications")
       .select("*")
       .eq("user_id", currentUser.id)
       .order("created_at", { ascending: false })
       .limit(30);
+    if (error) {
+      reportError("Notifications load failed", error);
+      return;
+    }
     if (data) setNotifications(data);
   }
 
   async function loadMessages() {
     setLoadingChat(true);
-    const { data } = await supabase
-      .from("messages")
-      .select("*")
-      .eq("chat_id", chatId)
-      .order("created_at", { ascending: true });
-    if (data) {
-      setMessages(data);
-      data.forEach((m) => {
-        if (m.receiver_id === currentUser.id && !m.is_read) markAsRead(m.id);
-      });
+    try {
+      const { data, error } = await supabase
+        .from("messages")
+        .select("*")
+        .eq("chat_id", chatId)
+        .order("created_at", { ascending: true });
+      if (error) throw error;
+      if (data) {
+        setMessages(data);
+        data.forEach((m) => {
+          if (m.receiver_id === currentUser.id && !m.is_read) markAsRead(m.id);
+        });
+      }
+    } catch (error) {
+      reportError("Messages load failed", error);
+    } finally {
+      setLoadingChat(false);
     }
-    setLoadingChat(false);
   }
 
   // --- ACTIONS ---
@@ -294,8 +371,8 @@ export default function App() {
 
   // shared insert helper — used by both text and GIF sends
   async function insertMessage(content, type) {
-    if (!chatId || !selectedUser) return;
-    await supabase.from("messages").insert({
+    if (!chatId || !selectedUser) return false;
+    const { error } = await supabase.from("messages").insert({
       chat_id: chatId,
       sender_id: currentUser.id,
       receiver_id: selectedUser.id,
@@ -303,6 +380,13 @@ export default function App() {
       type,
       is_read: false,
     });
+
+    if (error) {
+      reportError("Message send failed", error);
+      alert(GENERIC_ERROR);
+      return false;
+    }
+    return true;
   }
 
   async function sendMessage(e) {
@@ -310,14 +394,16 @@ export default function App() {
     const text = messageText.trim();
     if (!text) return;
     setMessageText("");
-    await insertMessage(text, "text");
+    const sent = await insertMessage(text, "text");
+    if (!sent) setMessageText(text);
   }
 
   async function sendGif(gifUrl) {
+    const sent = await insertMessage(gifUrl, "image");
+    if (!sent) return;
     setShowGiphy(false);
     setGiphySearch("");
     setGiphyResults([]);
-    await insertMessage(gifUrl, "image");
   }
 
   // --- GIPHY ---
@@ -325,7 +411,8 @@ export default function App() {
     e?.preventDefault();
     const q = giphySearch.trim();
     if (!GIPHY_API_KEY) {
-      alert("GIPHY API key is missing. Add VITE_GIPHY_API_KEY in Vercel.");
+      reportError("GIPHY API key is missing", new Error("VITE_GIPHY_API_KEY is not configured"));
+      alert(GENERIC_ERROR);
       return;
     }
     setGiphyLoading(true);
@@ -336,19 +423,21 @@ export default function App() {
           )}&limit=18&rating=pg`
         : `https://api.giphy.com/v1/gifs/trending?api_key=${GIPHY_API_KEY}&limit=18&rating=pg`;
       const res = await fetch(endpoint);
+      if (!res.ok) throw new Error(`GIPHY returned HTTP ${res.status}`);
       const json = await res.json();
       setGiphyResults(json.data || []);
-    } catch (err) {
-      alert("Couldn't load GIFs: " + err.message);
+    } catch (error) {
+      reportError("GIF search failed", error);
+      alert(GENERIC_ERROR);
+    } finally {
+      setGiphyLoading(false);
     }
-    setGiphyLoading(false);
   }
 
   function toggleGiphy() {
     const next = !showGiphy;
     setShowGiphy(next);
     if (next && giphyResults.length === 0) {
-      // preload trending GIFs when the panel first opens
       searchGiphy();
     }
   }
@@ -370,13 +459,20 @@ export default function App() {
           password: auth.password,
         });
         if (error) throw error;
-        await supabase.from("profiles").insert({ id: data.user.id, username: auth.username });
+        if (!data.user) throw new Error("Signup returned no user");
+
+        const { error: profileError } = await supabase
+          .from("profiles")
+          .insert({ id: data.user.id, username: auth.username });
+        if (profileError) throw profileError;
         setMode("login");
       }
-    } catch (err) {
-      alert(err.message);
+    } catch (error) {
+      reportError(`${mode === "login" ? "Login" : "Signup"} failed`, error);
+      alert(friendlyAuthError(error, mode));
+    } finally {
+      setAuthLoading(false);
     }
-    setAuthLoading(false);
   }
 
   // --- TIME FORMATTING ---
