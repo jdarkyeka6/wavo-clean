@@ -1,13 +1,10 @@
-// Push notification helpers — handles the "register a phone number" flow.
+// Push notification helpers — handles the browser push registration flow.
 // Called from App.jsx after login.
 
 import { supabase } from "./supabaseClient";
 
-// VAPID public key: paste yours here after generating it in step 2.
-// Until you do, push registration will skip silently (in-app notifs still work).
 const VAPID_PUBLIC_KEY = import.meta.env.VITE_VAPID_PUBLIC_KEY || "";
 
-// Web Push needs the key as a Uint8Array, not a base64 string.
 function urlBase64ToUint8Array(base64String) {
   const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
   const base64 = (base64String + padding).replace(/-/g, "+").replace(/_/g, "/");
@@ -23,7 +20,6 @@ export function pushSupported() {
   );
 }
 
-// Register the service worker (the doorman) once.
 export async function registerServiceWorker() {
   if (!("serviceWorker" in navigator)) return null;
   try {
@@ -36,8 +32,6 @@ export async function registerServiceWorker() {
   }
 }
 
-// Ask the user "may we send notifications?" — only when it makes sense.
-// Returns true if permission is granted, false otherwise.
 export async function ensureNotificationPermission() {
   if (!("Notification" in window)) return false;
   if (Notification.permission === "granted") return true;
@@ -46,9 +40,12 @@ export async function ensureNotificationPermission() {
   return result === "granted";
 }
 
-// Subscribe to push and save the subscription to Supabase.
-// Call this AFTER login and AFTER permission is granted.
+// Subscribe to Web Push and claim this browser subscription for the currently
+// authenticated Wavo user. Registration goes through a narrow server-side RPC
+// instead of a direct table upsert so the same browser can safely switch Wavo
+// accounts without an old push row causing a row-level-security failure.
 export async function subscribeToPush(userId) {
+  if (!userId) return null;
   if (!pushSupported()) {
     console.info("[wavo] Push not supported in this browser");
     return null;
@@ -61,7 +58,6 @@ export async function subscribeToPush(userId) {
 
   const reg = await navigator.serviceWorker.ready;
 
-  // Reuse existing subscription if we have one, otherwise create a new one.
   let sub = await reg.pushManager.getSubscription();
   if (!sub) {
     sub = await reg.pushManager.subscribe({
@@ -70,28 +66,20 @@ export async function subscribeToPush(userId) {
     });
   }
 
-  const json = sub.toJSON();
-  const row = {
-    user_id: userId,
-    endpoint: json.endpoint,
-    p256dh: json.keys.p256dh,
-    auth: json.keys.auth,
-    user_agent: navigator.userAgent.slice(0, 200),
-    last_seen_at: new Date().toISOString(),
-  };
+  const subscription = sub.toJSON();
+  const { error } = await supabase.rpc("claim_web_push_subscription", {
+    p_subscription: subscription,
+    p_user_agent: navigator.userAgent.slice(0, 200),
+  });
 
-  // Upsert on endpoint — if this exact subscription already exists (e.g.
-  // same browser, second login), just bump last_seen_at.
-  const { error } = await supabase
-    .from("push_subscriptions")
-    .upsert(row, { onConflict: "endpoint" });
+  if (error) {
+    console.warn("[wavo] Failed to save push subscription:", error);
+    return null;
+  }
 
-  if (error) console.warn("[wavo] Failed to save push subscription:", error);
   return sub;
 }
 
-// Unsubscribe — call this on logout if you want to stop receiving pushes
-// on this device.
 export async function unsubscribeFromPush() {
   if (!("serviceWorker" in navigator)) return;
   const reg = await navigator.serviceWorker.ready;
