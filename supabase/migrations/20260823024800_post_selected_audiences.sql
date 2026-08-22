@@ -14,6 +14,7 @@ create table if not exists public.post_audience (
   constraint post_audience_not_self check (author_id <> user_id)
 );
 create index if not exists post_audience_user_idx on public.post_audience(user_id, post_id);
+create index if not exists post_audience_author_idx on public.post_audience(author_id, post_id);
 alter table public.post_audience enable row level security;
 revoke all on table public.post_audience from anon, authenticated;
 grant select, insert, delete on table public.post_audience to authenticated;
