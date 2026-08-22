@@ -14,7 +14,7 @@ self.addEventListener("activate", (event) => {
  
 // Fires when the push service delivers a message from our Edge Function
 self.addEventListener("push", (event) => {
-  let data = {};
+  let data;
   try {
     data = event.data ? event.data.json() : {};
   } catch {
