@@ -1,0 +1,45 @@
+name: Apply post audience picker
+
+on:
+  pull_request:
+    branches:
+      - app-store-overhaul
+
+permissions:
+  contents: write
+
+jobs:
+  apply-picker:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/post-audience-picker
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Apply audience picker codemod
+        run: python3 scripts/apply_post_audience_picker.py
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Build
+        run: npm run build
+
+      - name: Commit verified feature
+        run: |
+          rm -f scripts/apply_post_audience_picker.py .github/workflows/apply-post-audience-picker.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "Let users choose post audiences"
+          git push origin HEAD:feature/post-audience-picker
