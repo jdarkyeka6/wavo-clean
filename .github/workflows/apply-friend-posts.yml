@@ -1,9 +1,9 @@
 name: Apply friend-only Posts
 
 on:
-  push:
+  pull_request:
     branches:
-      - feature/friend-posts
+      - app-store-overhaul
 
 permissions:
   contents: write
