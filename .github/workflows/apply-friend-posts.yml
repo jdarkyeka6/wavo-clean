@@ -1,0 +1,45 @@
+name: Apply friend-only Posts
+
+on:
+  push:
+    branches:
+      - feature/friend-posts
+
+permissions:
+  contents: write
+
+jobs:
+  apply-posts:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/friend-posts
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Apply Posts codemod
+        run: python3 scripts/apply_friend_posts.py
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Build
+        run: npm run build
+
+      - name: Commit verified feature
+        run: |
+          rm -f scripts/apply_friend_posts.py .github/workflows/apply-friend-posts.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "Add friends-only Posts feed"
+          git push origin HEAD:feature/friend-posts
