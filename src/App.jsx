@@ -27,6 +27,7 @@ import {
   createActivity,
   createPlan,
   createPoll,
+  createPost,
   createSpace,
   createWave,
   getActiveLocationShares,
@@ -36,12 +37,15 @@ import {
   getIncomingFriendRequests,
   getPlans,
   getPolls,
+  getPosts,
   getPrivacySettings,
   getProfile,
   getSpaceMessages,
   getSpaces,
   getWaves,
   reactToWave,
+  reactToPost,
+  deletePost,
   respondFriendRequest,
   searchProfiles,
   sendDmMessage,
@@ -57,6 +61,7 @@ import "./styles.css";
 
 const GENERIC_ERROR = "Sorry, something went wrong. Please try again.";
 const CREATE_TYPES = [
+  { id: "post", label: "Post", hint: "Share something that stays", icon: MessageCircle },
   { id: "wave", label: "Wave", hint: "Share something quick", icon: Sparkles },
   { id: "plan", label: "Plan", hint: "Get everyone organised", icon: CalendarDays },
   { id: "poll", label: "Poll", hint: "Decide together", icon: Check },
@@ -270,7 +275,34 @@ function WaveCard({ wave, onReact }) {
   );
 }
 
-function HomeScreen({ profile, spaces, waves, plans, polls, requests, activities, userId, actions }) {
+
+function PostCard({ post, userId, onReact, onDelete }) {
+  const counts = (post.reactions || []).reduce((acc, r) => ({ ...acc, [r.emoji]: (acc[r.emoji] || 0) + 1 }), {});
+  const mine = (post.reactions || []).find((r) => r.user_id === userId)?.emoji;
+  const ownPost = post.author_id === userId;
+  return (
+    <article className="post-card">
+      <div className="wave-head">
+        <Avatar profile={post.author} size="sm" />
+        <div><strong>{post.author?.username || "Wavo user"}</strong><span>{formatRelative(post.created_at)}</span></div>
+        <span className="tiny-pill">FRIENDS</span>
+      </div>
+      <p>{post.body}</p>
+      <div className="post-card-actions">
+        <div className="reaction-row">
+          {["❤️", "😂", "🔥", "👀"].map((emoji) => (
+            <button key={emoji} className={mine === emoji ? "selected" : ""} onClick={() => onReact(post.id, emoji)}>
+              {emoji}{counts[emoji] ? ` ${counts[emoji]}` : ""}
+            </button>
+          ))}
+        </div>
+        {ownPost && <button className="post-delete" onClick={() => onDelete(post.id)} aria-label="Delete post"><X size={15} /></button>}
+      </div>
+    </article>
+  );
+}
+
+function HomeScreen({ profile, spaces, posts, waves, plans, polls, requests, activities, userId, actions }) {
   const upcoming = plans.filter((p) => new Date(p.starts_at) >= new Date()).slice(0, 4);
   const needsVote = polls.filter((p) => !(p.votes || []).some((v) => v.user_id === userId)).slice(0, 2);
   return (
@@ -278,7 +310,7 @@ function HomeScreen({ profile, spaces, waves, plans, polls, requests, activities
       <section className="hero-card">
         <span className="eyebrow">YOUR PEOPLE, RIGHT NOW</span>
         <h1>Hey {profile?.username || "there"}.</h1>
-        <p>{spaces.length} Space{spaces.length === 1 ? "" : "s"} · {upcoming.length} upcoming plan{upcoming.length === 1 ? "" : "s"} · {waves.length} active Wave{waves.length === 1 ? "" : "s"}</p>
+        <p>{spaces.length} Space{spaces.length === 1 ? "" : "s"} · {upcoming.length} upcoming plan{upcoming.length === 1 ? "" : "s"} · {posts.length} friend post{posts.length === 1 ? "" : "s"}</p>
       </section>
 
       {(requests.length > 0 || needsVote.length > 0) && (
@@ -297,6 +329,12 @@ function HomeScreen({ profile, spaces, waves, plans, polls, requests, activities
       </section>
 
       {needsVote.map((poll) => <PollCard key={poll.id} poll={poll} userId={userId} onVote={actions.vote} />)}
+
+
+      <section>
+        <div className="section-heading"><div><span className="eyebrow">POSTS</span><h2>From friends</h2></div><button className="text-btn" onClick={() => actions.openCreate("post")}>New post</button></div>
+        {posts.length ? <div className="cards-stack">{posts.map((post) => <PostCard key={post.id} post={post} userId={userId} onReact={actions.reactPost} onDelete={actions.deletePost} />)}</div> : <div className="empty-card"><MessageCircle /><strong>No posts yet</strong><span>Posts stay around and are only visible to people you've actually added.</span><button onClick={() => actions.openCreate("post")}>Post something</button></div>}
+      </section>
 
       <section>
         <div className="section-heading"><div><span className="eyebrow">WAVES</span><h2>From your people</h2></div><button className="text-btn" onClick={() => actions.openCreate("wave")}>Send Wave</button></div>
@@ -383,7 +421,7 @@ function InboxScreen({ friends, requests, selectedFriend, setSelectedFriend, mes
   );
 }
 
-function ProfileScreen({ profile, privacy, locations, onPrivacy, onProfileSaved, onEnableNotifications, onStopLocations, onLogout }) {
+function ProfileScreen({ profile, posts, userId, onPostReact, onPostDelete, onNewPost, privacy, locations, onPrivacy, onProfileSaved, onEnableNotifications, onStopLocations, onLogout }) {
   const [bio, setBio] = useState(profile?.bio || "");
   const [status, setStatus] = useState(profile?.status || "");
   const [saving, setSaving] = useState(false);
@@ -401,6 +439,11 @@ function ProfileScreen({ profile, privacy, locations, onPrivacy, onProfileSaved,
   return (
     <div className="screen">
       <div className="profile-hero"><Avatar profile={profile} size="xl" /><div><span className="eyebrow">YOUR WAVO</span><h1>{profile?.username}</h1><p>@{profile?.username}</p></div></div>
+
+      <section>
+        <div className="section-heading"><div><span className="eyebrow">YOUR POSTS</span><h2>What you've shared</h2></div><button className="text-btn" onClick={onNewPost}>New post</button></div>
+        {posts.length ? <div className="cards-stack">{posts.map((post) => <PostCard key={post.id} post={post} userId={userId} onReact={onPostReact} onDelete={onPostDelete} />)}</div> : <div className="empty-card"><MessageCircle /><strong>Nothing posted yet</strong><span>Your persistent friend posts will live here.</span></div>}
+      </section>
       <form className="settings-card" onSubmit={saveProfile}><div className="settings-head"><Sparkles /><div><strong>Identity</strong><span>Keep it lightweight. You're here for people, not follower counts.</span></div></div><label>Status<input value={status} onChange={(e) => setStatus(e.target.value)} placeholder="Gaming, studying, out…" /></label><label>Bio<textarea value={bio} onChange={(e) => setBio(e.target.value)} maxLength={180} placeholder="A sentence about you" /></label><button className="secondary-btn">{saving ? "Saving…" : "Save profile"}</button></form>
 
       <section className="settings-card"><div className="settings-head"><Shield /><div><strong>Privacy Centre</strong><span>You decide what Wavo exposes.</span></div></div>
@@ -433,6 +476,7 @@ function CreateModal({ mode, setMode, spaces, presetSpace, onClose, onCreated, u
     e.preventDefault();
     setBusy(true);
     try {
+      if (mode === "post") await createPost(userId, { body: form.body });
       if (mode === "wave") await createWave(userId, { body: form.body, audience: form.audience, groupId: form.audience === "space" ? form.groupId : null });
       if (mode === "plan") await createPlan(userId, { groupId: form.groupId, title: form.title, location: form.location, startsAt: new Date(form.startsAt).toISOString(), notes: form.notes });
       if (mode === "poll") await createPoll(userId, { groupId: form.groupId, question: form.question, options: [form.option1, form.option2, form.option3] });
@@ -455,6 +499,7 @@ function CreateModal({ mode, setMode, spaces, presetSpace, onClose, onCreated, u
         <div className="modal-head"><div><span className="eyebrow">START SOMETHING</span><h2>{mode ? CREATE_TYPES.find((t) => t.id === mode)?.label : "Create"}</h2></div><button className="icon-button" onClick={onClose}><X /></button></div>
         {!mode ? <div className="create-grid">{CREATE_TYPES.map(({ id, label, hint, icon: Icon }) => <button key={id} onClick={() => setMode(id)}><Icon /><div><strong>{label}</strong><span>{hint}</span></div></button>)}</div> : (
           <form className="stack-form create-form" onSubmit={submit}>
+            {mode === "post" && <><label>Post<textarea required value={form.body} onChange={(e) => setForm({ ...form, body: e.target.value })} placeholder="What do you want your friends to see?" maxLength={2000} /></label><div className="form-note">Only accepted friends can see this. Posts stay until you delete them.</div></>}
             {mode === "wave" && <><label>Wave<textarea required value={form.body} onChange={(e) => setForm({ ...form, body: e.target.value })} placeholder="What's happening?" maxLength={500} /></label><label>Send to<select value={form.audience} onChange={(e) => setForm({ ...form, audience: e.target.value })}><option value="friends">Friends</option><option value="space">A Space</option></select></label></>}
             {mode === "plan" && <><label>Plan name<input required value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} placeholder="Beach, dinner, gaming…" /></label><label>When<input required type="datetime-local" value={form.startsAt} onChange={(e) => setForm({ ...form, startsAt: e.target.value })} /></label><label>Where<input value={form.location} onChange={(e) => setForm({ ...form, location: e.target.value })} placeholder="Optional place" /></label><label>Notes<textarea value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} /></label></>}
             {mode === "poll" && <><label>Question<input required value={form.question} onChange={(e) => setForm({ ...form, question: e.target.value })} placeholder="Where are we eating?" /></label>{[1, 2, 3].map((n) => <label key={n}>Option {n}<input required={n < 3} value={form[`option${n}`]} onChange={(e) => setForm({ ...form, [`option${n}`]: e.target.value })} /></label>)}</>}
@@ -474,7 +519,7 @@ export default function App() {
   const [session, setSession] = useState(null);
   const [booting, setBooting] = useState(true);
   const [tab, setTab] = useState("home");
-  const [data, setData] = useState({ profile: null, friends: [], requests: [], spaces: [], waves: [], plans: [], polls: [], activities: [], privacy: null, locations: [] });
+  const [data, setData] = useState({ profile: null, friends: [], requests: [], spaces: [], posts: [], waves: [], plans: [], polls: [], activities: [], privacy: null, locations: [] });
   const [createMode, setCreateMode] = useState(false);
   const [presetSpace, setPresetSpace] = useState(null);
   const [selectedFriend, setSelectedFriend] = useState(null);
@@ -498,10 +543,10 @@ export default function App() {
       const [profile, friends, requests, spaces, privacy] = await Promise.all([
         getProfile(userId), getFriends(userId), getIncomingFriendRequests(userId), getSpaces(userId), getPrivacySettings(userId),
       ]);
-      const [waves, plans, polls, activities, locations] = await Promise.all([
-        getWaves(), getPlans(userId, spaces), getPolls(), getActivities(), getActiveLocationShares(),
+      const [posts, waves, plans, polls, activities, locations] = await Promise.all([
+        getPosts(userId, friends), getWaves(), getPlans(userId, spaces), getPolls(), getActivities(), getActiveLocationShares(),
       ]);
-      setData({ profile, friends, requests, spaces, waves, plans, polls, activities, privacy, locations });
+      setData({ profile, friends, requests, spaces, posts, waves, plans, polls, activities, privacy, locations });
     } catch (err) {
       console.error("[wavo] refresh", err);
       setToast(GENERIC_ERROR);
@@ -532,6 +577,8 @@ export default function App() {
     rsvp: async (planId, response) => { await setRsvp(userId, planId, response); await refresh(); },
     vote: async (poll, optionId) => { await votePoll(userId, poll, optionId); await refresh(); },
     react: async (waveId, emoji) => { await reactToWave(userId, waveId, emoji); await refresh(); },
+    reactPost: async (postId, emoji) => { await reactToPost(userId, postId, emoji); await refresh(); },
+    deletePost: async (postId) => { await deletePost(userId, postId); await refresh(); setToast("Post deleted"); },
     shareLocation: async (plan) => {
       if (!navigator.geolocation) return setToast("Location isn't available on this device.");
       navigator.geolocation.getCurrentPosition(async (pos) => {
@@ -587,7 +634,7 @@ export default function App() {
         {tab === "home" && <HomeScreen {...data} userId={userId} actions={actions} />}
         {tab === "spaces" && <SpacesScreen spaces={data.spaces} selectedSpace={selectedSpace} setSelectedSpace={setSelectedSpace} messages={messages} messageText={messageText} setMessageText={setMessageText} sendMessage={sendCurrentMessage} plans={data.plans} polls={data.polls} activities={data.activities} userId={userId} actions={actions} />}
         {tab === "inbox" && <InboxScreen friends={data.friends} requests={data.requests} selectedFriend={selectedFriend} setSelectedFriend={setSelectedFriend} messages={messages} messageText={messageText} setMessageText={setMessageText} sendMessage={sendCurrentMessage} userId={userId} actions={actions} />}
-        {tab === "you" && <ProfileScreen profile={data.profile} privacy={data.privacy} locations={data.locations.filter((l) => l.owner_id === userId)} onPrivacy={updatePrivacy} onProfileSaved={refresh} onEnableNotifications={enableNotifications} onStopLocations={stopLocations} onLogout={() => supabase.auth.signOut()} />}
+        {tab === "you" && <ProfileScreen profile={data.profile} posts={data.posts.filter((p) => p.author_id === userId)} userId={userId} onPostReact={actions.reactPost} onPostDelete={actions.deletePost} onNewPost={() => actions.openCreate("post")} privacy={data.privacy} locations={data.locations.filter((l) => l.owner_id === userId)} onPrivacy={updatePrivacy} onProfileSaved={refresh} onEnableNotifications={enableNotifications} onStopLocations={stopLocations} onLogout={() => supabase.auth.signOut()} />}
       </div>
       {!isDeepView && <BottomNav tab={tab} setTab={(next) => { setTab(next); if (next !== "spaces") setSelectedSpace(null); if (next !== "inbox") setSelectedFriend(null); }} openCreate={() => actions.openCreate()} />}
       {createMode && <CreateModal mode={createMode === true ? null : createMode} setMode={setCreateMode} spaces={data.spaces} presetSpace={presetSpace} onClose={() => { setCreateMode(false); setPresetSpace(null); }} onCreated={refresh} userId={userId} />}
