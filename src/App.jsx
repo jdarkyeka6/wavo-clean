@@ -285,7 +285,7 @@ function PostCard({ post, userId, onReact, onDelete }) {
       <div className="wave-head">
         <Avatar profile={post.author} size="sm" />
         <div><strong>{post.author?.username || "Wavo user"}</strong><span>{formatRelative(post.created_at)}</span></div>
-        <span className="tiny-pill">FRIENDS</span>
+        <span className="tiny-pill">{post.visibility === "selected" ? "SELECTED" : "ALL FRIENDS"}</span>
       </div>
       <p>{post.body}</p>
       <div className="post-card-actions">
@@ -333,7 +333,7 @@ function HomeScreen({ profile, spaces, posts, waves, plans, polls, requests, act
 
       <section>
         <div className="section-heading"><div><span className="eyebrow">POSTS</span><h2>From friends</h2></div><button className="text-btn" onClick={() => actions.openCreate("post")}>New post</button></div>
-        {posts.length ? <div className="cards-stack">{posts.map((post) => <PostCard key={post.id} post={post} userId={userId} onReact={actions.reactPost} onDelete={actions.deletePost} />)}</div> : <div className="empty-card"><MessageCircle /><strong>No posts yet</strong><span>Posts stay around and are only visible to people you've actually added.</span><button onClick={() => actions.openCreate("post")}>Post something</button></div>}
+        {posts.length ? <div className="cards-stack">{posts.map((post) => <PostCard key={post.id} post={post} userId={userId} onReact={actions.reactPost} onDelete={actions.deletePost} />)}</div> : <div className="empty-card"><MessageCircle /><strong>No posts yet</strong><span>Posts stay around, and you choose which friends get to see each one.</span><button onClick={() => actions.openCreate("post")}>Post something</button></div>}
       </section>
 
       <section>
@@ -466,17 +466,17 @@ function ToggleRow({ label, value, onChange }) {
   return <button type="button" className="toggle-row" onClick={() => onChange(!value)}><span>{label}</span><i className={value ? "toggle on" : "toggle"}><b /></i></button>;
 }
 
-function CreateModal({ mode, setMode, spaces, presetSpace, onClose, onCreated, userId }) {
+function CreateModal({ mode, setMode, spaces, friends, presetSpace, onClose, onCreated, userId }) {
   const [busy, setBusy] = useState(false);
   const [form, setForm] = useState({
-    body: "", audience: presetSpace ? "space" : "friends", groupId: presetSpace || spaces[0]?.id || "", title: "", location: "", startsAt: "", notes: "", question: "", option1: "", option2: "", option3: "", activityType: "would_you_rather", items: "", name: "", description: "", emoji: "🌊",
+    body: "", postVisibility: "friends", postRecipients: [], audience: presetSpace ? "space" : "friends", groupId: presetSpace || spaces[0]?.id || "", title: "", location: "", startsAt: "", notes: "", question: "", option1: "", option2: "", option3: "", activityType: "would_you_rather", items: "", name: "", description: "", emoji: "🌊",
   });
 
   async function submit(e) {
     e.preventDefault();
     setBusy(true);
     try {
-      if (mode === "post") await createPost(userId, { body: form.body });
+      if (mode === "post") await createPost(userId, { body: form.body, visibility: form.postVisibility, recipientIds: form.postRecipients });
       if (mode === "wave") await createWave(userId, { body: form.body, audience: form.audience, groupId: form.audience === "space" ? form.groupId : null });
       if (mode === "plan") await createPlan(userId, { groupId: form.groupId, title: form.title, location: form.location, startsAt: new Date(form.startsAt).toISOString(), notes: form.notes });
       if (mode === "poll") await createPoll(userId, { groupId: form.groupId, question: form.question, options: [form.option1, form.option2, form.option3] });
@@ -499,7 +499,27 @@ function CreateModal({ mode, setMode, spaces, presetSpace, onClose, onCreated, u
         <div className="modal-head"><div><span className="eyebrow">START SOMETHING</span><h2>{mode ? CREATE_TYPES.find((t) => t.id === mode)?.label : "Create"}</h2></div><button className="icon-button" onClick={onClose}><X /></button></div>
         {!mode ? <div className="create-grid">{CREATE_TYPES.map(({ id, label, hint, icon: Icon }) => <button key={id} onClick={() => setMode(id)}><Icon /><div><strong>{label}</strong><span>{hint}</span></div></button>)}</div> : (
           <form className="stack-form create-form" onSubmit={submit}>
-            {mode === "post" && <><label>Post<textarea required value={form.body} onChange={(e) => setForm({ ...form, body: e.target.value })} placeholder="What do you want your friends to see?" maxLength={2000} /></label><div className="form-note">Only accepted friends can see this. Posts stay until you delete them.</div></>}
+            {mode === "post" && <>
+              <label>Post<textarea required value={form.body} onChange={(e) => setForm({ ...form, body: e.target.value })} placeholder="What do you want to share?" maxLength={2000} /></label>
+              <label>Who can see this?
+                <select value={form.postVisibility} onChange={(e) => setForm({ ...form, postVisibility: e.target.value, postRecipients: e.target.value === "friends" ? [] : form.postRecipients })}>
+                  <option value="friends">All friends</option>
+                  <option value="selected">Choose people</option>
+                </select>
+              </label>
+              {form.postVisibility === "selected" && <div className="post-audience-picker">
+                <div className="audience-picker-head"><span>Choose people</span><strong>{form.postRecipients.length} selected</strong></div>
+                {friends.length ? <div className="audience-list">{friends.map((friend) => {
+                  const selected = form.postRecipients.includes(friend.id);
+                  return <button type="button" key={friend.id} className={selected ? "audience-person selected" : "audience-person"} aria-pressed={selected} onClick={() => setForm({ ...form, postRecipients: selected ? form.postRecipients.filter((id) => id !== friend.id) : [...form.postRecipients, friend.id] })}>
+                    <Avatar profile={friend} size="sm" />
+                    <span>{friend.username}</span>
+                    <i className="audience-check">{selected && <Check size={16} />}</i>
+                  </button>;
+                })}</div> : <div className="form-note">Add a friend first, then you can choose them here.</div>}
+              </div>}
+              <div className="form-note">Posts stay until you delete them. Only the audience you choose can open them.</div>
+            </>}
             {mode === "wave" && <><label>Wave<textarea required value={form.body} onChange={(e) => setForm({ ...form, body: e.target.value })} placeholder="What's happening?" maxLength={500} /></label><label>Send to<select value={form.audience} onChange={(e) => setForm({ ...form, audience: e.target.value })}><option value="friends">Friends</option><option value="space">A Space</option></select></label></>}
             {mode === "plan" && <><label>Plan name<input required value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} placeholder="Beach, dinner, gaming…" /></label><label>When<input required type="datetime-local" value={form.startsAt} onChange={(e) => setForm({ ...form, startsAt: e.target.value })} /></label><label>Where<input value={form.location} onChange={(e) => setForm({ ...form, location: e.target.value })} placeholder="Optional place" /></label><label>Notes<textarea value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} /></label></>}
             {mode === "poll" && <><label>Question<input required value={form.question} onChange={(e) => setForm({ ...form, question: e.target.value })} placeholder="Where are we eating?" /></label>{[1, 2, 3].map((n) => <label key={n}>Option {n}<input required={n < 3} value={form[`option${n}`]} onChange={(e) => setForm({ ...form, [`option${n}`]: e.target.value })} /></label>)}</>}
@@ -507,7 +527,7 @@ function CreateModal({ mode, setMode, spaces, presetSpace, onClose, onCreated, u
             {mode === "space" && <><label>Emoji<input className="emoji-input" value={form.emoji} onChange={(e) => setForm({ ...form, emoji: e.target.value })} maxLength={4} /></label><label>Name<input required value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="Summer Crew" /></label><label>Description<textarea value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} placeholder="What this Space is for" /></label></>}
             {needSpace && <label>Space<select required value={form.groupId} onChange={(e) => setForm({ ...form, groupId: e.target.value })}><option value="" disabled>Choose a Space</option>{spaces.map((s) => <option key={s.id} value={s.id}>{s.emoji || "🌊"} {s.name}</option>)}</select></label>}
             {needSpace && spaces.length === 0 && <div className="form-note">Create a Space first. Plans, polls and activities belong somewhere instead of floating around loose.</div>}
-            <div className="modal-actions"><button type="button" className="text-btn" onClick={() => setMode(null)}>Back</button><button className="primary-btn" disabled={busy || (needSpace && !form.groupId)}>{busy ? "Creating…" : `Create ${CREATE_TYPES.find((t) => t.id === mode)?.label}`}</button></div>
+            <div className="modal-actions"><button type="button" className="text-btn" onClick={() => setMode(null)}>Back</button><button className="primary-btn" disabled={busy || (needSpace && !form.groupId) || (mode === "post" && form.postVisibility === "selected" && form.postRecipients.length === 0)}>{busy ? "Creating…" : `Create ${CREATE_TYPES.find((t) => t.id === mode)?.label}`}</button></div>
           </form>
         )}
       </div>
@@ -637,7 +657,7 @@ export default function App() {
         {tab === "you" && <ProfileScreen profile={data.profile} posts={data.posts.filter((p) => p.author_id === userId)} userId={userId} onPostReact={actions.reactPost} onPostDelete={actions.deletePost} onNewPost={() => actions.openCreate("post")} privacy={data.privacy} locations={data.locations.filter((l) => l.owner_id === userId)} onPrivacy={updatePrivacy} onProfileSaved={refresh} onEnableNotifications={enableNotifications} onStopLocations={stopLocations} onLogout={() => supabase.auth.signOut()} />}
       </div>
       {!isDeepView && <BottomNav tab={tab} setTab={(next) => { setTab(next); if (next !== "spaces") setSelectedSpace(null); if (next !== "inbox") setSelectedFriend(null); }} openCreate={() => actions.openCreate()} />}
-      {createMode && <CreateModal mode={createMode === true ? null : createMode} setMode={setCreateMode} spaces={data.spaces} presetSpace={presetSpace} onClose={() => { setCreateMode(false); setPresetSpace(null); }} onCreated={refresh} userId={userId} />}
+      {createMode && <CreateModal mode={createMode === true ? null : createMode} setMode={setCreateMode} spaces={data.spaces} friends={data.friends} presetSpace={presetSpace} onClose={() => { setCreateMode(false); setPresetSpace(null); }} onCreated={refresh} userId={userId} />}
       <Toast message={toast} onClose={() => setToast("")} />
     </main>
   );

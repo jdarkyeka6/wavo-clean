@@ -323,13 +323,28 @@ export async function getPosts(userId, friends = []) {
   }));
 }
 
-export async function createPost(userId, { body }) {
+export async function createPost(userId, { body, visibility = "friends", recipientIds = [] }) {
+  const cleanRecipients = [...new Set((recipientIds || []).filter((id) => id && id !== userId))];
+  if (!['friends', 'selected'].includes(visibility)) throw new Error("Invalid post visibility");
+  if (visibility === "selected" && cleanRecipients.length === 0) throw new Error("Choose at least one friend");
+
   const { data, error } = await supabase
     .from("posts")
-    .insert({ author_id: userId, body: body.trim(), visibility: "friends" })
+    .insert({ author_id: userId, body: body.trim(), visibility })
     .select("*")
     .single();
   if (error) throw error;
+
+  if (visibility === "selected") {
+    const rows = cleanRecipients.map((friendId) => ({ post_id: data.id, author_id: userId, user_id: friendId }));
+    const { error: audienceError } = await supabase.from("post_audience").insert(rows);
+    if (audienceError) {
+      const { error: cleanupError } = await supabase.from("posts").delete().eq("id", data.id).eq("author_id", userId);
+      if (cleanupError) console.error("[wavo] post audience cleanup", cleanupError);
+      throw audienceError;
+    }
+  }
+
   return data;
 }
 
