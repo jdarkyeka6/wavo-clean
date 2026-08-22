@@ -291,3 +291,70 @@ export async function sendDmMessage(userId, friendId, content, type = "text") {
   const { error } = await supabase.from("messages").insert({ chat_id: chatId, sender_id: userId, receiver_id: friendId, content, type, is_read: false });
   if (error) throw error;
 }
+
+
+export async function getPosts(userId, friends = []) {
+  const authorIds = [userId, ...(friends || []).map((f) => f.id)].filter(Boolean);
+  if (!authorIds.length) return [];
+  const { data: posts, error } = await supabase
+    .from("posts")
+    .select("*")
+    .in("author_id", authorIds)
+    .order("created_at", { ascending: false })
+    .limit(80);
+  if (error) throw error;
+  if (!posts?.length) return [];
+
+  const postIds = posts.map((p) => p.id);
+  const profileIds = [...new Set(posts.map((p) => p.author_id))];
+  const [profilesResult, reactionsResult] = await Promise.all([
+    supabase.from("profiles").select("id,username,avatar_url,status").in("id", profileIds),
+    supabase.from("post_reactions").select("*").in("post_id", postIds),
+  ]);
+  if (profilesResult.error) throw profilesResult.error;
+  if (reactionsResult.error) throw reactionsResult.error;
+
+  const profileMap = Object.fromEntries((profilesResult.data || []).map((p) => [p.id, p]));
+  const reactions = reactionsResult.data || [];
+  return posts.map((post) => ({
+    ...post,
+    author: profileMap[post.author_id],
+    reactions: reactions.filter((r) => r.post_id === post.id),
+  }));
+}
+
+export async function createPost(userId, { body }) {
+  const { data, error } = await supabase
+    .from("posts")
+    .insert({ author_id: userId, body: body.trim(), visibility: "friends" })
+    .select("*")
+    .single();
+  if (error) throw error;
+  return data;
+}
+
+export async function reactToPost(userId, postId, emoji) {
+  const { data: existing, error: existingError } = await supabase
+    .from("post_reactions")
+    .select("emoji")
+    .eq("post_id", postId)
+    .eq("user_id", userId)
+    .maybeSingle();
+  if (existingError) throw existingError;
+
+  if (existing?.emoji === emoji) {
+    const { error } = await supabase.from("post_reactions").delete().eq("post_id", postId).eq("user_id", userId);
+    if (error) throw error;
+    return;
+  }
+
+  const { error } = await supabase
+    .from("post_reactions")
+    .upsert({ post_id: postId, user_id: userId, emoji }, { onConflict: "post_id,user_id" });
+  if (error) throw error;
+}
+
+export async function deletePost(userId, postId) {
+  const { error } = await supabase.from("posts").delete().eq("id", postId).eq("author_id", userId);
+  if (error) throw error;
+}
