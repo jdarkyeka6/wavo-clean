@@ -19,7 +19,9 @@ function write(k, value) {
   } catch {
     // Storage can be unavailable in private/low-space modes. Offline support
     // should degrade quietly rather than break the app.
+    return false;
   }
+  return true;
 }
 
 export function cacheAppData(userId, data) {
@@ -45,10 +47,14 @@ export function getDraft(userId, conversationKey) {
 export function setDraft(userId, conversationKey, text) {
   const k = key(userId, "draft", conversationKey);
   if (!text) {
-    try { localStorage.removeItem(k); } catch {}
-    return;
+    try {
+      localStorage.removeItem(k);
+    } catch {
+      return false;
+    }
+    return true;
   }
-  write(k, text);
+  return write(k, text);
 }
 
 export function getUxPrefs(userId) {
@@ -92,5 +98,8 @@ export function removeOutboxItem(userId, id) {
 export function clearUserOfflineData(userId) {
   try {
     Object.keys(localStorage).filter((k) => k.startsWith(`${PREFIX}:${userId}:`)).forEach((k) => localStorage.removeItem(k));
-  } catch {}
+    return true;
+  } catch {
+    return false;
+  }
 }
