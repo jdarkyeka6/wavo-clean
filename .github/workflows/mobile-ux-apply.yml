@@ -1,0 +1,33 @@
+name: Apply mobile UX overhaul
+on:
+  pull_request:
+    branches: [app-store-overhaul]
+permissions:
+  contents: write
+jobs:
+  apply-and-verify:
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Apply mobile UX patch
+        run: python3 scripts/apply_mobile_ux.py
+      - name: Install
+        run: npm install
+      - name: Lint
+        run: npm run lint
+      - name: Production build
+        run: npm run build
+      - name: Commit verified source
+        run: |
+          git config user.name "wavo-ux-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add src/App.jsx src/wavoData.js public/sw.js package-lock.json
+          git commit -m "Make Wavo mobile-first and offline-friendly" || exit 0
+          git push origin HEAD:${{ github.head_ref }}
