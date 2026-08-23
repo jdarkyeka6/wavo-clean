@@ -58,6 +58,10 @@ import {
   votePoll,
 } from "./wavoData";
 import "./styles.css";
+import "./mobile-ux.css";
+import { OfflineBanner, Onboarding, UniversalSearch, CatchUpCard, QuickAccess, ChatTools, ReactionSettings, PullToRefresh } from "./MobileUX";
+import { cacheAppData, loadCachedAppData, cacheMessages, loadCachedMessages, getDraft, setDraft, getUxPrefs, updateUxPrefs, rememberRecent, queueOutbox, getOutbox, removeOutboxItem } from "./offline";
+import { getChatPins, setChatPinned, getNicknames, setNickname, deleteDmMessage, deleteSpaceMessage, scheduleDmMessage, markDmRead } from "./uxData";
 
 const GENERIC_ERROR = "Sorry, something went wrong. Please try again.";
 const CREATE_TYPES = [
@@ -199,10 +203,11 @@ function BottomNav({ tab, setTab, openCreate }) {
   );
 }
 
-function Header({ profile, pendingCount, onBell }) {
+function Header({ profile, pendingCount, onBell, onSearch }) {
   return (
     <header className="app-header">
       <div className="brand-lockup"><div className="mini-mark">W</div><strong>Wavo</strong></div>
+      <button className="mobile-search-trigger" onClick={onSearch} aria-label="Search Wavo"><Search size={19} /></button>
       <button className="icon-button" onClick={onBell} aria-label="Notifications">
         <Bell size={20} />
         {pendingCount > 0 && <span className="badge-dot">{pendingCount > 9 ? "9+" : pendingCount}</span>}
@@ -302,7 +307,7 @@ function PostCard({ post, userId, onReact, onDelete }) {
   );
 }
 
-function HomeScreen({ profile, spaces, posts, waves, plans, polls, requests, activities, userId, actions }) {
+function HomeScreen({ profile, friends, spaces, posts, waves, plans, polls, requests, activities, pins, userId, actions }) {
   const upcoming = plans.filter((p) => new Date(p.starts_at) >= new Date()).slice(0, 4);
   const needsVote = polls.filter((p) => !(p.votes || []).some((v) => v.user_id === userId)).slice(0, 2);
   return (
@@ -312,6 +317,8 @@ function HomeScreen({ profile, spaces, posts, waves, plans, polls, requests, act
         <h1>Hey {profile?.username || "there"}.</h1>
         <p>{spaces.length} Space{spaces.length === 1 ? "" : "s"} · {upcoming.length} upcoming plan{upcoming.length === 1 ? "" : "s"} · {posts.length} friend post{posts.length === 1 ? "" : "s"}</p>
       </section>
+      <CatchUpCard requests={requests} plans={plans} polls={polls} userId={userId} />
+      <QuickAccess userId={userId} friends={friends} spaces={spaces} pins={pins || []} onFriend={actions.openFriend} onSpace={actions.openSpace} />
 
       {(requests.length > 0 || needsVote.length > 0) && (
         <section>
@@ -353,7 +360,7 @@ function SpacesScreen({ spaces, selectedSpace, setSelectedSpace, messages, messa
     const spaceActivities = activities.filter((a) => a.group_id === selectedSpace.id);
     return (
       <div className="screen">
-        <button className="back-button" onClick={() => setSelectedSpace(null)}><ChevronLeft size={18} /> Spaces</button>
+        <div className="mobile-detail-bar"><button className="back-button" onClick={() => setSelectedSpace(null)}><ChevronLeft size={18} /> Spaces</button><button className="mobile-tools-button" onClick={() => actions.openChatTools("space", selectedSpace)} aria-label="Space tools"><Settings size={18}/></button></div>
         <section className="space-hero">
           <div className="space-emoji large">{selectedSpace.emoji || "🌊"}</div>
           <div><span className="eyebrow">SPACE</span><h1>{selectedSpace.name}</h1><p>{selectedSpace.description || "Your shared corner of Wavo."}</p></div>
@@ -387,7 +394,7 @@ function SpacesScreen({ spaces, selectedSpace, setSelectedSpace, messages, messa
   );
 }
 
-function InboxScreen({ friends, requests, selectedFriend, setSelectedFriend, messages, messageText, setMessageText, sendMessage, userId, actions }) {
+function InboxScreen({ friends, requests, selectedFriend, setSelectedFriend, messages, messageText, setMessageText, sendMessage, userId, actions, nicknames = {} }) {
   const [search, setSearch] = useState("");
   const [results, setResults] = useState([]);
   const [searching, setSearching] = useState(false);
@@ -402,7 +409,7 @@ function InboxScreen({ friends, requests, selectedFriend, setSelectedFriend, mes
   if (selectedFriend) {
     return (
       <div className="chat-screen">
-        <header className="chat-topbar"><button onClick={() => setSelectedFriend(null)}><ChevronLeft /></button><Avatar profile={selectedFriend} size="sm" /><div><strong>{selectedFriend.username}</strong><span>{selectedFriend.status || "Wavo friend"}</span></div></header>
+        <header className="chat-topbar"><button onClick={() => setSelectedFriend(null)}><ChevronLeft /></button><Avatar profile={selectedFriend} size="sm" /><div><strong>{nicknames[selectedFriend.id] || selectedFriend.username}</strong><span>{nicknames[selectedFriend.id] ? `@${selectedFriend.username}` : (selectedFriend.status || "Wavo friend")}</span></div><button className="mobile-tools-button" onClick={() => actions.openChatTools("dm", selectedFriend)} aria-label="Chat tools"><Settings size={18}/></button></header>
         <div className="dm-messages">
           {messages.map((m) => <div key={m.id} className={m.sender_id === userId ? "dm-row mine" : "dm-row"}><div className="dm-bubble">{m.type === "image" ? <img src={m.content} alt="Shared" /> : <p>{m.deleted_at ? "Message deleted" : m.content}</p>}<span>{formatRelative(m.created_at)}</span></div></div>)}
         </div>
@@ -444,7 +451,7 @@ function ProfileScreen({ profile, posts, userId, onPostReact, onPostDelete, onNe
         <div className="section-heading"><div><span className="eyebrow">YOUR POSTS</span><h2>What you've shared</h2></div><button className="text-btn" onClick={onNewPost}>New post</button></div>
         {posts.length ? <div className="cards-stack">{posts.map((post) => <PostCard key={post.id} post={post} userId={userId} onReact={onPostReact} onDelete={onPostDelete} />)}</div> : <div className="empty-card"><MessageCircle /><strong>Nothing posted yet</strong><span>Your persistent friend posts will live here.</span></div>}
       </section>
-      <form className="settings-card" onSubmit={saveProfile}><div className="settings-head"><Sparkles /><div><strong>Identity</strong><span>Keep it lightweight. You're here for people, not follower counts.</span></div></div><label>Status<input value={status} onChange={(e) => setStatus(e.target.value)} placeholder="Gaming, studying, out…" /></label><label>Bio<textarea value={bio} onChange={(e) => setBio(e.target.value)} maxLength={180} placeholder="A sentence about you" /></label><button className="secondary-btn">{saving ? "Saving…" : "Save profile"}</button></form>
+      <form className="settings-card" onSubmit={saveProfile}><div className="settings-head"><Sparkles /><div><strong>Identity</strong><span>Keep it lightweight. You're here for people, not follower counts.</span></div></div><label>Status<input value={status} onChange={(e) => setStatus(e.target.value)} placeholder="Gaming, studying, out…" /></label><label>Bio<textarea value={bio} onChange={(e) => setBio(e.target.value)} maxLength={180} placeholder="A sentence about you" /></label><ReactionSettings userId={userId} /><button className="secondary-btn">{saving ? "Saving…" : "Save profile"}</button></form>
 
       <section className="settings-card"><div className="settings-head"><Shield /><div><strong>Privacy Centre</strong><span>You decide what Wavo exposes.</span></div></div>
         {privacy && <>
@@ -539,7 +546,7 @@ export default function App() {
   const [session, setSession] = useState(null);
   const [booting, setBooting] = useState(true);
   const [tab, setTab] = useState("home");
-  const [data, setData] = useState({ profile: null, friends: [], requests: [], spaces: [], posts: [], waves: [], plans: [], polls: [], activities: [], privacy: null, locations: [] });
+  const [data, setData] = useState({ profile: null, friends: [], requests: [], spaces: [], posts: [], waves: [], plans: [], polls: [], activities: [], privacy: null, locations: [], pins: [], nicknames: {} });
   const [createMode, setCreateMode] = useState(false);
   const [presetSpace, setPresetSpace] = useState(null);
   const [selectedFriend, setSelectedFriend] = useState(null);
@@ -547,51 +554,105 @@ export default function App() {
   const [messages, setMessages] = useState([]);
   const [messageText, setMessageText] = useState("");
   const [toast, setToast] = useState("");
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [online, setOnline] = useState(() => typeof navigator === "undefined" ? true : navigator.onLine);
+  const [chatToolTarget, setChatToolTarget] = useState(null);
+  const [undoSend, setUndoSend] = useState(null);
 
   const userId = session?.user?.id;
 
   useEffect(() => {
+    const setConnection = () => setOnline(navigator.onLine);
+    window.addEventListener("online", setConnection);
+    window.addEventListener("offline", setConnection);
+    const command = (e) => { if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") { e.preventDefault(); setSearchOpen(true); } };
+    window.addEventListener("keydown", command);
     registerServiceWorker().catch(() => {});
     supabase.auth.getSession().then(({ data: authData }) => { setSession(authData.session || null); setBooting(false); });
     const { data: authListener } = supabase.auth.onAuthStateChange((_event, next) => { setSession(next); setBooting(false); });
-    return () => authListener.subscription.unsubscribe();
+    return () => { authListener.subscription.unsubscribe(); window.removeEventListener("online", setConnection); window.removeEventListener("offline", setConnection); window.removeEventListener("keydown", command); };
   }, []);
 
   async function refresh() {
     if (!userId) return;
     try {
-      const [profile, friends, requests, spaces, privacy] = await Promise.all([
-        getProfile(userId), getFriends(userId), getIncomingFriendRequests(userId), getSpaces(userId), getPrivacySettings(userId),
+      const [profile, friends, requests, spaces, privacy, pins, nicknames] = await Promise.all([
+        getProfile(userId), getFriends(userId), getIncomingFriendRequests(userId), getSpaces(userId), getPrivacySettings(userId), getChatPins(userId), getNicknames(userId),
       ]);
       const [posts, waves, plans, polls, activities, locations] = await Promise.all([
         getPosts(userId, friends), getWaves(), getPlans(userId, spaces), getPolls(), getActivities(), getActiveLocationShares(),
       ]);
-      setData({ profile, friends, requests, spaces, posts, waves, plans, polls, activities, privacy, locations });
+      const next = { profile, friends, requests, spaces, posts, waves, plans, polls, activities, privacy, locations, pins, nicknames };
+      setData(next);
+      cacheAppData(userId, next);
     } catch (err) {
       console.error("[wavo] refresh", err);
-      setToast(GENERIC_ERROR);
+      const cached = loadCachedAppData(userId);
+      if (cached) { setData((prev) => ({ ...prev, ...cached })); setToast("Offline copy loaded"); }
+      else setToast(GENERIC_ERROR);
     }
   }
 
-  useEffect(() => { if (userId) refresh(); }, [userId]);
+  useEffect(() => {
+    if (!userId) return;
+    const cached = loadCachedAppData(userId);
+    if (cached) setData((prev) => ({ ...prev, ...cached }));
+    refresh();
+  }, [userId]);
 
   useEffect(() => {
     if (!userId || !selectedFriend) { setMessages([]); return; }
     const chatId = [userId, selectedFriend.id].sort().join("_");
-    getDmMessages(userId, selectedFriend.id).then((r) => setMessages(r.messages)).catch(console.error);
-    const channel = supabase.channel(`wavo-dm:${chatId}`).on("postgres_changes", { event: "*", schema: "public", table: "messages", filter: `chat_id=eq.${chatId}` }, () => getDmMessages(userId, selectedFriend.id).then((r) => setMessages(r.messages))).subscribe();
+    const cacheKey = `dm:${chatId}`;
+    const cached = loadCachedMessages(userId, cacheKey);
+    if (cached.length) setMessages(cached);
+    setMessageText(getDraft(userId, cacheKey));
+    markDmRead(userId, selectedFriend.id).catch(() => {});
+    const load = () => getDmMessages(userId, selectedFriend.id).then((r) => { setMessages(r.messages); cacheMessages(userId, cacheKey, r.messages); }).catch(() => {});
+    load();
+    const channel = supabase.channel(`wavo-dm:${chatId}`).on("postgres_changes", { event: "*", schema: "public", table: "messages", filter: `chat_id=eq.${chatId}` }, load).subscribe();
     return () => { supabase.removeChannel(channel); };
   }, [userId, selectedFriend]);
 
   useEffect(() => {
     if (!selectedSpace) { if (!selectedFriend) setMessages([]); return; }
-    getSpaceMessages(selectedSpace.id).then(setMessages).catch(console.error);
-    const channel = supabase.channel(`wavo-space:${selectedSpace.id}`).on("postgres_changes", { event: "*", schema: "public", table: "group_messages", filter: `group_id=eq.${selectedSpace.id}` }, () => getSpaceMessages(selectedSpace.id).then(setMessages)).subscribe();
+    const cacheKey = `space:${selectedSpace.id}`;
+    const cached = loadCachedMessages(userId, cacheKey);
+    if (cached.length) setMessages(cached);
+    setMessageText(getDraft(userId, cacheKey));
+    const load = () => getSpaceMessages(selectedSpace.id).then((rows) => { setMessages(rows); cacheMessages(userId, cacheKey, rows); }).catch(() => {});
+    load();
+    const channel = supabase.channel(`wavo-space:${selectedSpace.id}`).on("postgres_changes", { event: "*", schema: "public", table: "group_messages", filter: `group_id=eq.${selectedSpace.id}` }, load).subscribe();
     return () => { supabase.removeChannel(channel); };
-  }, [selectedSpace]);
+  }, [selectedSpace, userId]);
+
+  useEffect(() => {
+    if (!userId) return;
+    const key = selectedFriend ? `dm:${[userId, selectedFriend.id].sort().join("_")}` : selectedSpace ? `space:${selectedSpace.id}` : null;
+    if (key) setDraft(userId, key, messageText);
+  }, [messageText, selectedFriend?.id, selectedSpace?.id, userId]);
+
+  useEffect(() => {
+    if (!userId || !online) return;
+    let cancelled = false;
+    (async () => {
+      for (const item of getOutbox(userId)) {
+        if (cancelled) break;
+        try {
+          if (item.kind === "dm") await sendDmMessage(userId, item.targetId, item.content);
+          else await sendSpaceMessage(item.targetId, userId, item.content);
+          removeOutboxItem(userId, item.id);
+        } catch { break; }
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [userId, online]);
 
   const actions = useMemo(() => ({
     openCreate: (mode = null, spaceId = null) => { setPresetSpace(spaceId); setCreateMode(mode || true); },
+    openFriend: (friend) => { rememberRecent(userId, "friend", friend.id); setTab("inbox"); setSelectedSpace(null); setSelectedFriend(friend); },
+    openSpace: (space) => { rememberRecent(userId, "space", space.id); setTab("spaces"); setSelectedFriend(null); setSelectedSpace(space); },
+    openChatTools: (kind, target) => setChatToolTarget({ kind, target }),
     respondRequest: async (id, status) => { await respondFriendRequest(id, status); await refresh(); setToast(status === "accepted" ? "Friend added" : "Request updated"); },
     addFriend: async (receiverId) => { await sendFriendRequest(userId, receiverId); setToast("Friend request sent"); },
     rsvp: async (planId, response) => { await setRsvp(userId, planId, response); await refresh(); },
@@ -616,11 +677,54 @@ export default function App() {
     e.preventDefault();
     const content = messageText.trim();
     if (!content) return;
+    const kind = selectedFriend ? "dm" : "space";
+    const targetId = selectedFriend?.id || selectedSpace?.id;
+    if (!targetId) return;
     setMessageText("");
+    const tempId = `temp:${Date.now()}`;
+    const optimistic = { id: tempId, sender_id: userId, user_id: userId, content, type: "text", created_at: new Date().toISOString(), queued: !online };
+    setMessages((prev) => [...prev, optimistic]);
+    if (!online) {
+      const queued = queueOutbox(userId, { kind, targetId, content });
+      setUndoSend({ ...queued, tempId, offline: true });
+      setToast("Queued. Wavo will send it when you're back online.");
+      return;
+    }
     try {
-      if (selectedFriend) await sendDmMessage(userId, selectedFriend.id, content);
-      else if (selectedSpace) await sendSpaceMessage(selectedSpace.id, userId, content);
-    } catch (err) { console.error(err); setMessageText(content); setToast(GENERIC_ERROR); }
+      const sent = kind === "dm" ? await sendDmMessage(userId, targetId, content) : await sendSpaceMessage(targetId, userId, content);
+      setMessages((prev) => prev.map((m) => m.id === tempId ? (sent || { ...optimistic, id: tempId }) : m));
+      if (sent?.id) {
+        setUndoSend({ kind, id: sent.id });
+        setTimeout(() => setUndoSend((current) => current?.id === sent.id ? null : current), 5000);
+      }
+    } catch (err) { console.error(err); setMessages((prev) => prev.filter((m) => m.id !== tempId)); setMessageText(content); setToast(GENERIC_ERROR); }
+  }
+
+  async function undoLastSend() {
+    const item = undoSend;
+    if (!item) return;
+    try {
+      if (item.offline) { removeOutboxItem(userId, item.id); setMessages((prev) => prev.filter((m) => m.id !== item.tempId)); }
+      else { if (item.kind === "dm") await deleteDmMessage(userId, item.id); else await deleteSpaceMessage(userId, item.id); setMessages((prev) => prev.filter((m) => m.id !== item.id)); }
+      setUndoSend(null); setToast("Message undone");
+    } catch { setToast(GENERIC_ERROR); }
+  }
+
+  async function toggleCurrentPin() {
+    const current = chatToolTarget; if (!current) return;
+    const kind = current.kind === "dm" ? "dm" : "space"; const id = String(current.target.id);
+    const pinned = data.pins.some((p) => p.kind === kind && p.target_id === id);
+    await setChatPinned(userId, kind, id, !pinned); await refresh(); setToast(pinned ? "Unpinned" : "Pinned");
+  }
+
+  async function saveCurrentNickname(value) {
+    if (chatToolTarget?.kind !== "dm") return;
+    await setNickname(userId, chatToolTarget.target.id, value); await refresh(); setToast("Nickname saved");
+  }
+
+  async function scheduleCurrentMessage(content, when) {
+    if (chatToolTarget?.kind !== "dm") return;
+    await scheduleDmMessage(userId, chatToolTarget.target.id, content, new Date(when).toISOString()); setToast("Message scheduled");
   }
 
   async function updatePrivacy(patch) {
@@ -647,17 +751,26 @@ export default function App() {
 
   const isDeepView = (tab === "inbox" && selectedFriend) || (tab === "spaces" && selectedSpace);
 
+  const uxPrefs = getUxPrefs(userId);
+  const currentToolPinned = chatToolTarget ? data.pins.some((p) => p.kind === (chatToolTarget.kind === "dm" ? "dm" : "space") && p.target_id === String(chatToolTarget.target.id)) : false;
+  const currentToolMuted = chatToolTarget?.kind === "space" ? Boolean(uxPrefs.mutedSpaces?.[chatToolTarget.target.id]) : false;
+
   return (
     <main className="app-shell">
-      {!isDeepView && <Header profile={data.profile} pendingCount={data.requests.length} onBell={() => setTab("inbox")} />}
-      <div className="app-content">
+      <OfflineBanner online={online} queued={getOutbox(userId).length} />
+      {!isDeepView && <Header profile={data.profile} pendingCount={data.requests.length} onBell={() => setTab("inbox")} onSearch={() => setSearchOpen(true)} />}
+      <PullToRefresh onRefresh={refresh}><div className="app-content">
         {tab === "home" && <HomeScreen {...data} userId={userId} actions={actions} />}
         {tab === "spaces" && <SpacesScreen spaces={data.spaces} selectedSpace={selectedSpace} setSelectedSpace={setSelectedSpace} messages={messages} messageText={messageText} setMessageText={setMessageText} sendMessage={sendCurrentMessage} plans={data.plans} polls={data.polls} activities={data.activities} userId={userId} actions={actions} />}
-        {tab === "inbox" && <InboxScreen friends={data.friends} requests={data.requests} selectedFriend={selectedFriend} setSelectedFriend={setSelectedFriend} messages={messages} messageText={messageText} setMessageText={setMessageText} sendMessage={sendCurrentMessage} userId={userId} actions={actions} />}
+        {tab === "inbox" && <InboxScreen friends={data.friends} requests={data.requests} selectedFriend={selectedFriend} setSelectedFriend={setSelectedFriend} messages={messages} messageText={messageText} setMessageText={setMessageText} sendMessage={sendCurrentMessage} userId={userId} actions={actions} nicknames={data.nicknames} />}
         {tab === "you" && <ProfileScreen profile={data.profile} posts={data.posts.filter((p) => p.author_id === userId)} userId={userId} onPostReact={actions.reactPost} onPostDelete={actions.deletePost} onNewPost={() => actions.openCreate("post")} privacy={data.privacy} locations={data.locations.filter((l) => l.owner_id === userId)} onPrivacy={updatePrivacy} onProfileSaved={refresh} onEnableNotifications={enableNotifications} onStopLocations={stopLocations} onLogout={() => supabase.auth.signOut()} />}
-      </div>
+      </div></PullToRefresh>
       {!isDeepView && <BottomNav tab={tab} setTab={(next) => { setTab(next); if (next !== "spaces") setSelectedSpace(null); if (next !== "inbox") setSelectedFriend(null); }} openCreate={() => actions.openCreate()} />}
       {createMode && <CreateModal mode={createMode === true ? null : createMode} setMode={setCreateMode} spaces={data.spaces} friends={data.friends} presetSpace={presetSpace} onClose={() => { setCreateMode(false); setPresetSpace(null); }} onCreated={refresh} userId={userId} />}
+      <Onboarding userId={userId} onCreateSpace={() => actions.openCreate("space")} onAddFriend={() => setTab("inbox")} />
+      <UniversalSearch open={searchOpen} onClose={() => setSearchOpen(false)} data={data} messages={messages} onOpenFriend={actions.openFriend} onOpenSpace={actions.openSpace} onOpenTab={setTab} />
+      <ChatTools open={Boolean(chatToolTarget)} onClose={() => setChatToolTarget(null)} target={chatToolTarget?.target} kind={chatToolTarget?.kind} messages={messages} pinned={currentToolPinned} nickname={chatToolTarget?.kind === "dm" ? data.nicknames[chatToolTarget.target.id] : ""} onTogglePin={toggleCurrentPin} onNickname={saveCurrentNickname} onSchedule={scheduleCurrentMessage} muted={currentToolMuted} onMute={() => { const id = chatToolTarget.target.id; const mutedSpaces = { ...(getUxPrefs(userId).mutedSpaces || {}), [id]: !currentToolMuted }; updateUxPrefs(userId, { mutedSpaces }); setToast(!currentToolMuted ? "Space muted" : "Space unmuted"); }} />
+      {undoSend && <div className="undo-toast"><span>{undoSend.offline ? "Message queued" : "Message sent"}</span><button onClick={undoLastSend}>Undo</button></div>}
       <Toast message={toast} onClose={() => setToast("")} />
     </main>
   );
