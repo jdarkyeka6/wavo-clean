@@ -110,14 +110,15 @@ export async function getSpaceMessages(groupId) {
 }
 
 export async function sendSpaceMessage(groupId, userId, content) {
-  const { error } = await supabase.from("group_messages").insert({
+  const { data, error } = await supabase.from("group_messages").insert({
     group_id: groupId,
     user_id: userId,
     sender_id: userId,
     content: content.trim(),
     type: "text",
-  });
+  }).select("*").single();
   if (error) throw error;
+  return data;
 }
 
 export async function getWaves() {
@@ -288,8 +289,9 @@ export async function getDmMessages(userId, friendId) {
 
 export async function sendDmMessage(userId, friendId, content, type = "text") {
   const chatId = [userId, friendId].sort().join("_");
-  const { error } = await supabase.from("messages").insert({ chat_id: chatId, sender_id: userId, receiver_id: friendId, content, type, is_read: false });
+  const { data, error } = await supabase.from("messages").insert({ chat_id: chatId, sender_id: userId, receiver_id: friendId, content, type, is_read: false }).select("*").single();
   if (error) throw error;
+  return data;
 }
 
 
