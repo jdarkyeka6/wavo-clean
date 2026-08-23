@@ -13,7 +13,7 @@ export function Onboarding({ userId, onCreateSpace, onAddFriend }) {
   const key = `wavo:onboarding:v2:${userId}`;
   const [open, setOpen] = useState(() => { try { return localStorage.getItem(key) !== "done"; } catch { return false; } });
   if (!open) return null;
-  const done = () => { try { localStorage.setItem(key, "done"); } catch {} setOpen(false); };
+  const done = () => { try { localStorage.setItem(key, "done"); } catch { console.info("[wavo] onboarding state could not be persisted"); } setOpen(false); };
   return <div className="ux-overlay"><section className="ux-sheet onboarding-sheet">
     <button className="sheet-close" onClick={done}><X /></button>
     <div className="wavo-mark">W</div><span className="eyebrow">WELCOME TO WAVO</span><h2>Your people, without the clutter.</h2>
